@@ -16,12 +16,17 @@ class MuleRunCrawler:
     
     def __init__(self):
         self.config = CRAWLER_CONFIG
+        self.playwright = None
         self.browser: Browser = None
         self.page: Page = None
     
     def _init_browser(self):
         """初始化浏览器"""
-        playwright = sync_playwright().start()
+        # 确保之前的实例已清理
+        self._close_browser()
+        
+        # 启动 playwright（使用上下文管理器确保正确清理）
+        self.playwright = sync_playwright().start()
         
         # VPS 环境下的启动参数
         launch_options = {
@@ -34,7 +39,7 @@ class MuleRunCrawler:
             ]
         }
         
-        self.browser = playwright.chromium.launch(**launch_options)
+        self.browser = self.playwright.chromium.launch(**launch_options)
         logger.info("浏览器启动成功")
         context = self.browser.new_context(
             user_agent=self.config['user_agent'],
@@ -157,13 +162,18 @@ class MuleRunCrawler:
                     wait_until=wait_strategy,
                     timeout=timeout
                 )
-                time.sleep(2)  # 等待页面完全加载
+                
+                # 等待 JavaScript 渲染（SPA 应用需要）
+                wait_after_load = self.config.get('page_wait_after_load', 5)
+                logger.info(f"页面加载完成，等待 {wait_after_load} 秒让 JavaScript 渲染...")
+                time.sleep(wait_after_load)
+                
                 break  # 成功则跳出重试循环
                 
             except Exception as e:
                 logger.warning(f"访问页面失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if self.browser:
-                    self._close_browser()
+                # 确保完全清理浏览器和 playwright 实例
+                self._close_browser()
                 
                 if attempt < max_retries - 1:
                     logger.info(f"等待 {retry_delay} 秒后重试...")
@@ -173,7 +183,6 @@ class MuleRunCrawler:
         
         # 页面访问成功后，继续执行爬取逻辑
         try:
-            
             # 确保是 Most used 模式（默认模式）
             # 检查当前排序模式，如果不是 Most used 则点击切换
             try:
@@ -230,10 +239,21 @@ class MuleRunCrawler:
             self._close_browser()
     
     def _close_browser(self):
-        """关闭浏览器"""
+        """关闭浏览器和 playwright 实例"""
         if self.browser:
-            self.browser.close()
-            logger.info("浏览器已关闭")
+            try:
+                self.browser.close()
+            except Exception as e:
+                logger.warning(f"关闭浏览器时出错: {e}")
+            self.browser = None
+            self.page = None
+        
+        if self.playwright:
+            try:
+                self.playwright.stop()
+            except Exception as e:
+                logger.warning(f"停止 playwright 时出错: {e}")
+            self.playwright = None
 
 
 def crawl_agents() -> List[Dict]:

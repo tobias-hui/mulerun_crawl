@@ -38,8 +38,9 @@ CRAWLER_CONFIG = {
     'no_new_content_threshold': 3,  # 连续几次没有新内容则停止
     'headless': True,  # 无头模式（VPS 环境推荐）
     'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'page_load_timeout': 60000,  # 页面加载超时时间（毫秒），默认60秒
-    'page_wait_strategy': 'load',  # 页面等待策略：'load', 'domcontentloaded', 'networkidle'
+    'page_load_timeout': 120000,  # 页面加载超时时间（毫秒），默认120秒（SPA需要更多时间）
+    'page_wait_strategy': 'domcontentloaded',  # 页面等待策略：'load', 'domcontentloaded', 'networkidle'（SPA使用domcontentloaded）
+    'page_wait_after_load': 5,  # 页面加载后额外等待时间（秒），用于等待JavaScript渲染
     'max_retries': 3,  # 最大重试次数
     'retry_delay': 5,  # 重试延迟（秒）
 }
