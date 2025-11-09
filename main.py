@@ -1,6 +1,7 @@
 """主程序入口"""
 import argparse
 import logging
+from datetime import datetime
 
 from mulerun_crawl.utils import setup_logging
 from mulerun_crawl.crawler import crawl_agents
@@ -46,13 +47,22 @@ def main():
             
             # 保存数据
             storage = DatabaseStorage()
-            storage.save_agents(agents)
+            crawl_time = datetime.now()
+            removed_agents = storage.save_agents(agents, crawl_time)
+            
+            # 发送飞书通知
+            from mulerun_crawl.notifications import FeishuNotifier
+            notifier = FeishuNotifier()
+            if removed_agents:
+                notifier.send_agent_removed_notification(removed_agents)
+            notifier.send_crawl_summary(storage.get_statistics(), crawl_time)
             
             # 输出统计信息
             stats = storage.get_statistics()
             logger.info("爬取完成！统计信息：")
             logger.info(f"  - 活跃 agents: {stats['active_agents']}")
             logger.info(f"  - 下架 agents: {stats['inactive_agents']}")
+            logger.info(f"  - 本次下架: {len(removed_agents)} 个")
             logger.info(f"  - 总爬取次数: {stats['total_crawls']}")
             logger.info(f"  - 最新爬取时间: {stats['latest_crawl']}")
             

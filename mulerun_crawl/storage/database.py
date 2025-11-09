@@ -109,7 +109,7 @@ class DatabaseStorage:
             conn.commit()
             logger.info("数据库表初始化完成")
     
-    def save_agents(self, agents: List[Dict], crawl_time: datetime = None):
+    def save_agents(self, agents: List[Dict], crawl_time: datetime = None) -> List[Dict]:
         """
         保存 agent 数据
         
@@ -123,16 +123,27 @@ class DatabaseStorage:
                 - author: 作者
                 - rank: 排名
             crawl_time: 爬取时间，默认为当前时间
+            
+        Returns:
+            List[Dict]: 下架的 agents 列表（包含 link, name, author 等信息）
         """
         if crawl_time is None:
             crawl_time = datetime.now()
         
+        removed_agents = []
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # 获取当前所有活跃的 agent links
-            cursor.execute("SELECT link FROM agents WHERE is_active = TRUE")
-            existing_links = {row[0] for row in cursor.fetchall()}
+            # 获取当前所有活跃的 agent links 和详细信息
+            cursor.execute("""
+                SELECT link, name, author 
+                FROM agents 
+                WHERE is_active = TRUE
+            """)
+            existing_agents = {row[0]: {'link': row[0], 'name': row[1], 'author': row[2]} 
+                              for row in cursor.fetchall()}
+            existing_links = set(existing_agents.keys())
             
             # 当前爬取的 agent links
             current_links = {agent['link'] for agent in agents}
@@ -140,6 +151,9 @@ class DatabaseStorage:
             # 标记下架的 agents（存在于数据库但不在当前爬取结果中）
             disappeared_links = existing_links - current_links
             if disappeared_links:
+                # 获取下架 agents 的详细信息
+                removed_agents = [existing_agents[link] for link in disappeared_links]
+                
                 cursor.execute("""
                     UPDATE agents 
                     SET is_active = FALSE, last_updated = %s
@@ -183,6 +197,8 @@ class DatabaseStorage:
                 """, (agent['link'], agent['rank'], crawl_time))
             
             logger.info(f"成功保存 {len(agents)} 个 agents")
+            
+            return removed_agents
     
     def get_active_agents(self, limit: Optional[int] = None) -> List[Dict]:
         """获取所有活跃的 agents"""

@@ -9,6 +9,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from ..config import SCHEDULER_CONFIG
 from ..crawler import crawl_agents
 from ..storage import DatabaseStorage
+from ..notifications import FeishuNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +47,22 @@ class CrawlScheduler:
                 return
             
             # 保存数据
-            self.storage.save_agents(agents, crawl_time)
+            removed_agents = self.storage.save_agents(agents, crawl_time)
+            
+            # 获取统计信息
+            stats = self.storage.get_statistics()
+            
+            # 发送飞书通知
+            notifier = FeishuNotifier()
+            if removed_agents:
+                notifier.send_agent_removed_notification(removed_agents)
+            notifier.send_crawl_summary(stats, crawl_time)
             
             # 输出统计信息
-            stats = self.storage.get_statistics()
             logger.info(f"爬取完成！统计信息：")
             logger.info(f"  - 活跃 agents: {stats['active_agents']}")
             logger.info(f"  - 下架 agents: {stats['inactive_agents']}")
+            logger.info(f"  - 本次下架: {len(removed_agents)} 个")
             logger.info(f"  - 总爬取次数: {stats['total_crawls']}")
             logger.info(f"  - 最新爬取时间: {stats['latest_crawl']}")
             logger.info("=" * 50)
