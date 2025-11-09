@@ -1,13 +1,13 @@
 [Unit]
 Description=MuleRun Agent Crawler
-After=network.target postgresql.service
+After=network.target
 
 [Service]
 Type=simple
-User=your_user
-WorkingDirectory=/path/to/mulerun_crawl
-Environment="PATH=/path/to/mulerun_crawl/.venv/bin"
-ExecStart=/path/to/mulerun_crawl/.venv/bin/python /path/to/mulerun_crawl/main.py --mode daemon
+User=your_username
+WorkingDirectory=/home/your_username/mulerun_crawl
+Environment="PATH=/home/your_username/mulerun_crawl/.venv/bin"
+ExecStart=/home/your_username/mulerun_crawl/.venv/bin/python /home/your_username/mulerun_crawl/main.py --mode daemon
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -16,3 +16,13 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 
+# 使用说明：
+# 1. 复制到 /etc/systemd/system/mulerun-crawl.service
+# 2. 修改以下内容：
+#    - User: 替换为你的 VPS 用户名
+#    - WorkingDirectory: 替换为项目的实际路径
+#    - ExecStart 中的路径: 替换为项目的实际路径
+# 3. 运行以下命令：
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable mulerun-crawl
+#    sudo systemctl start mulerun-crawl

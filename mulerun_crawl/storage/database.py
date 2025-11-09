@@ -196,6 +196,18 @@ class DatabaseStorage:
             columns = [desc[0] for desc in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
+    def get_all_agents(self, limit: Optional[int] = None) -> List[Dict]:
+        """获取所有 agents（包括下架的）"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            query = "SELECT * FROM agents ORDER BY rank ASC"
+            if limit:
+                query += f" LIMIT {limit}"
+            cursor.execute(query)
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
     def get_rank_history(self, agent_link: str) -> List[Dict]:
         """获取某个 agent 的排名历史"""
         with self.get_connection() as conn:

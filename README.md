@@ -241,110 +241,45 @@ python scripts/query.py stats --show-changes
 
 ## VPS 部署
 
-### 前置要求
+> 📖 **详细部署指南**: 查看 [VPS_DEPLOYMENT.md](VPS_DEPLOYMENT.md) 获取完整的部署步骤和故障排查指南。
 
-1. **Ubuntu/Debian VPS**（推荐 Ubuntu 22.04+）
-2. **Python 3.10+** 已安装
-3. **Neon PostgreSQL** 数据库已配置
-
-### 部署步骤
-
-#### 1. 克隆项目到 VPS
+### 快速部署（5 步）
 
 ```bash
-git clone <repository-url>
-cd mulerun_crawl
-```
+# 1. 克隆项目
+git clone <repository-url> && cd mulerun_crawl
 
-#### 2. 运行设置脚本
+# 2. 运行设置脚本
+chmod +x setup.sh && ./setup.sh
 
-```bash
-chmod +x setup.sh
-./setup.sh
-```
+# 3. 配置数据库（编辑 .env 文件）
+nano .env
+# 添加: DATABASE_URL=postgresql://...
 
-脚本会自动：
-- 创建虚拟环境
-- 安装 Python 依赖
-- 安装 Playwright 浏览器
-- 安装系统依赖（需要 sudo 权限）
-- 创建 `.env` 文件模板
-
-#### 3. 配置数据库
-
-编辑 `.env` 文件，添加 Neon 数据库连接字符串：
-
-```env
-DATABASE_URL=postgresql://username:password@host.neon.tech/database?sslmode=require
-```
-
-#### 4. 测试运行
-
-```bash
+# 4. 测试运行
 source .venv/bin/activate
 python main.py --mode once
-```
 
-如果成功，会看到爬取到的 agents 数量和统计信息。
-
-#### 5. 部署为 systemd 服务（推荐）
-
-复制服务文件示例：
-
-```bash
+# 5. 部署为 systemd 服务
 sudo cp mulerun-crawl.service.example /etc/systemd/system/mulerun-crawl.service
-```
-
-编辑服务文件，修改路径和用户：
-
-```bash
-sudo nano /etc/systemd/system/mulerun-crawl.service
-```
-
-确保以下路径正确：
-- `User`: 运行服务的用户
-- `WorkingDirectory`: 项目目录的绝对路径
-- `ExecStart`: Python 可执行文件的绝对路径
-
-启动并启用服务：
-
-```bash
+sudo nano /etc/systemd/system/mulerun-crawl.service  # 修改路径和用户
 sudo systemctl daemon-reload
 sudo systemctl enable mulerun-crawl
 sudo systemctl start mulerun-crawl
+```
+
+### 常用命令
+
+```bash
+# 查看服务状态
 sudo systemctl status mulerun-crawl
-```
 
-查看日志：
-
-```bash
-# 查看服务日志
+# 查看日志
 sudo journalctl -u mulerun-crawl -f
+tail -f logs/crawler.log
 
-# 查看应用日志
-tail -f /path/to/mulerun_crawl/logs/crawler.log
-```
-
-### 其他部署方式
-
-#### 使用 screen
-
-```bash
-screen -S mulerun-crawl
-cd /path/to/mulerun_crawl
-source .venv/bin/activate
-python main.py --mode daemon
-# 按 Ctrl+A 然后按 D 分离会话
-```
-
-#### 使用 tmux
-
-```bash
-tmux new -s mulerun-crawl
-cd /path/to/mulerun_crawl
-source .venv/bin/activate
-python main.py --mode daemon
-# 按 Ctrl+B 然后按 D 分离会话
+# 重启服务
+sudo systemctl restart mulerun-crawl
 ```
 
 ## 日志
