@@ -37,13 +37,16 @@ echo "浏览器安装完成"
 # 安装系统依赖（VPS 环境必需）
 echo ""
 echo "安装 Playwright 系统依赖..."
-echo "注意：这需要 sudo 权限，如果失败请手动运行: sudo playwright install-deps chromium"
+echo "注意：这需要 sudo 权限，如果失败请手动运行: sudo $(pwd)/.venv/bin/playwright install-deps chromium"
 if command -v sudo &> /dev/null; then
-    sudo playwright install-deps chromium || {
-        echo "警告: 系统依赖安装失败，请手动运行: sudo playwright install-deps chromium"
+    sudo "$(pwd)/.venv/bin/playwright" install-deps chromium || {
+        echo "警告: 系统依赖安装失败，请手动运行以下命令:"
+        echo "  sudo $(pwd)/.venv/bin/playwright install-deps chromium"
+        echo "  或者使用 apt 安装:"
+        echo "  sudo apt-get install -y libatk1.0-0 libatk-bridge2.0-0 libcups2 libatspi2.0-0 libxdamage1 libcairo2 libpango-1.0-0 libasound2t64"
     }
 else
-    echo "警告: 未找到 sudo，请手动安装系统依赖: playwright install-deps chromium"
+    echo "警告: 未找到 sudo，请手动安装系统依赖"
 fi
 
 # 检查 .env 文件

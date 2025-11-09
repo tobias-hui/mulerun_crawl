@@ -137,13 +137,42 @@ class MuleRunCrawler:
         Returns:
             List[Dict]: agent 信息列表，按排名排序
         """
+        max_retries = self.config.get('max_retries', 3)
+        retry_delay = self.config.get('retry_delay', 5)
+        
+        # 重试访问页面
+        for attempt in range(max_retries):
+            try:
+                self._init_browser()
+                
+                # 访问首页
+                logger.info(f"访问 {self.config['base_url']} (尝试 {attempt + 1}/{max_retries})")
+                
+                # 设置超时时间
+                timeout = self.config.get('page_load_timeout', 60000)
+                wait_strategy = self.config.get('page_wait_strategy', 'load')
+                
+                self.page.goto(
+                    self.config['base_url'],
+                    wait_until=wait_strategy,
+                    timeout=timeout
+                )
+                time.sleep(2)  # 等待页面完全加载
+                break  # 成功则跳出重试循环
+                
+            except Exception as e:
+                logger.warning(f"访问页面失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if self.browser:
+                    self._close_browser()
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"等待 {retry_delay} 秒后重试...")
+                    time.sleep(retry_delay)
+                else:
+                    raise  # 最后一次尝试失败则抛出异常
+        
+        # 页面访问成功后，继续执行爬取逻辑
         try:
-            self._init_browser()
-            
-            # 访问首页
-            logger.info(f"访问 {self.config['base_url']}")
-            self.page.goto(self.config['base_url'], wait_until='networkidle')
-            time.sleep(2)  # 等待页面完全加载
             
             # 确保是 Most used 模式（默认模式）
             # 检查当前排序模式，如果不是 Most used 则点击切换
