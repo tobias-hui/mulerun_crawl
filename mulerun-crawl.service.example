@@ -1,0 +1,18 @@
+[Unit]
+Description=MuleRun Agent Crawler
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/path/to/mulerun_crawl
+Environment="PATH=/path/to/mulerun_crawl/.venv/bin"
+ExecStart=/path/to/mulerun_crawl/.venv/bin/python /path/to/mulerun_crawl/main.py --mode daemon
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

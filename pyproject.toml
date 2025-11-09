@@ -1,0 +1,20 @@
+[project]
+name = "mulerun-crawl"
+version = "0.1.0"
+description = "MuleRun Agent 爬虫 - 监控和追踪 MuleRun 网站上的 AI agents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40.0",
+    "psycopg2-binary>=2.9.9",
+    "python-dotenv>=1.0.0",
+    "apscheduler>=3.10.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mulerun_crawl*"]
