@@ -1,16 +1,20 @@
 """任务管理路由"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Security
 from typing import Optional
 
 from ..models.schemas import TaskListResponse, TaskStatus, SchedulerStatus, SchedulerConfig
 from ..services.task_service import task_service
 from ..scheduler import scheduler_manager
+from ..middleware.auth import verify_api_key
 
 router = APIRouter()
 
 
 @router.get("/", response_model=TaskListResponse)
-async def list_tasks(limit: int = Query(50, ge=1, le=1000)):
+async def list_tasks(
+    limit: int = Query(50, ge=1, le=1000),
+    api_key: str = Security(verify_api_key)
+):
     """获取任务列表"""
     tasks = task_service.list_tasks(limit=limit)
     return TaskListResponse(
@@ -29,13 +33,13 @@ async def get_task(task_id: str):
 
 
 @router.get("/scheduler/status", response_model=SchedulerStatus)
-async def get_scheduler_status():
+async def get_scheduler_status(api_key: str = Security(verify_api_key)):
     """获取定时任务状态"""
     return scheduler_manager.get_status()
 
 
 @router.post("/scheduler/start")
-async def start_scheduler():
+async def start_scheduler(api_key: str = Security(verify_api_key)):
     """启动定时任务"""
     try:
         scheduler_manager.start()
@@ -45,7 +49,7 @@ async def start_scheduler():
 
 
 @router.post("/scheduler/stop")
-async def stop_scheduler():
+async def stop_scheduler(api_key: str = Security(verify_api_key)):
     """停止定时任务"""
     try:
         scheduler_manager.stop()
@@ -55,7 +59,10 @@ async def stop_scheduler():
 
 
 @router.put("/scheduler/config", response_model=SchedulerStatus)
-async def update_scheduler_config(config: SchedulerConfig):
+async def update_scheduler_config(
+    config: SchedulerConfig,
+    api_key: str = Security(verify_api_key)
+):
     """更新定时任务配置"""
     try:
         scheduler_manager.update_config(

@@ -1,12 +1,13 @@
 """爬取控制路由"""
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Security
 from fastapi.responses import JSONResponse
 
 from ..models.schemas import CrawlRequest, CrawlResponse, TaskStatus
 from ..services.task_service import task_service
 from ..services.crawl_service import run_crawl_task
+from ..middleware.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,11 @@ router = APIRouter()
 
 
 @router.post("/start", response_model=CrawlResponse)
-async def start_crawl(request: CrawlRequest, background_tasks: BackgroundTasks):
+async def start_crawl(
+    request: CrawlRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Security(verify_api_key)
+):
     """
     启动爬取任务
     
