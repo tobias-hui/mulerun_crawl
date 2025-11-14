@@ -30,12 +30,10 @@ else:
 
 # 爬虫配置
 CRAWLER_CONFIG = {
-    'base_url': 'https://mulerun.com/',
-    'sort_mode': 'most_used',  # 只爬取 Most used 排序
+    'base_url': 'https://mulerun.com/agent-store',
     'scroll_timeout': 30,  # 滚动超时时间（秒）
     'scroll_delay': 2,  # 每次滚动后的等待时间（秒）
-    'max_scroll_attempts': 50,  # 最大滚动次数
-    'no_new_content_threshold': 3,  # 连续几次没有新内容则停止
+    'scroll_count': 3,  # 滚动次数（触发懒加载）
     'headless': True,  # 无头模式（VPS 环境推荐）
     'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'page_load_timeout': 120000,  # 页面加载超时时间（毫秒），默认120秒（SPA需要更多时间）
@@ -43,6 +41,8 @@ CRAWLER_CONFIG = {
     'page_wait_after_load': 5,  # 页面加载后额外等待时间（秒），用于等待JavaScript渲染
     'max_retries': 3,  # 最大重试次数
     'retry_delay': 5,  # 重试延迟（秒）
+    'detail_page_timeout': 30000,  # 详情页加载超时时间（毫秒）
+    'detail_page_wait': 2,  # 详情页加载后等待时间（秒）
 }
 
 # 定时任务配置
