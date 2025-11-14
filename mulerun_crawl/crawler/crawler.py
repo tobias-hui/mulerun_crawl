@@ -783,47 +783,133 @@ class MuleRunCrawler:
             except:
                 pass
             
-            # agent_name: 页面主标题（首个 h1 或 [data-agent-name]）
-            agent_name_elem = (
-                detail_page.query_selector('h1') or
-                detail_page.query_selector('[data-agent-name]')
-            )
+            # agent_name: 页面主标题（首个 h1）
+            agent_name_elem = detail_page.query_selector('h1.font-plus-jakarta-sans, h1')
             if agent_name_elem:
                 detail_info['agent_name'] = agent_name_elem.inner_text().strip()
             
             # owner_handle: 作者/发布者标识
-            # 优先取显式 by xxx 或作者链接文本
-            owner_elem = (
-                detail_page.query_selector('text=/by\\s+\\w+/i') or
-                detail_page.query_selector('a[href*="/@"]')
-            )
+            # 方法1: 从右侧边栏的作者信息卡片中提取
+            owner_elem = detail_page.query_selector('div[title*="Profile"]')
             if owner_elem:
-                owner_text = owner_elem.inner_text().strip()
-                owner_match = re.search(r'by\s+([^\s]+)', owner_text, re.IGNORECASE)
-                if owner_match:
-                    detail_info['owner_handle'] = owner_match.group(1)
-                else:
-                    detail_info['owner_handle'] = owner_text
+                # 查找作者名（通常在标题div中，class包含font-inter和font-semibold）
+                name_elem = owner_elem.query_selector('div.font-inter.font-semibold, div[class*="font-semibold"]')
+                if name_elem:
+                    owner_text = name_elem.inner_text().strip()
+                    if owner_text and 'View Profile' not in owner_text:
+                        detail_info['owner_handle'] = owner_text
             
-            # description: 首屏描述段落（首个长段落或 meta og:description）
+            # 方法2: 从包含作者信息的链接中提取
+            if not detail_info['owner_handle']:
+                owner_link = detail_page.query_selector('a[href*="/@"]')
+                if owner_link:
+                    href = owner_link.get_attribute('href') or ''
+                    url_match = re.search(r'/@([^/]+)', href)
+                    if url_match:
+                        detail_info['owner_handle'] = url_match.group(1)
+            
+            # 方法3: 从当前页面的URL中提取
+            if not detail_info['owner_handle']:
+                url_match = re.search(r'/@([^/]+)/', agent_url)
+                if url_match:
+                    detail_info['owner_handle'] = url_match.group(1)
+            
+            # description: 从内容区域提取描述
+            # 优先查找 meta og:description
             desc_elem = detail_page.query_selector('meta[property="og:description"]')
             if desc_elem:
                 detail_info['description'] = desc_elem.get_attribute('content') or ''
-            else:
-                # 查找首屏长段落
-                paragraphs = detail_page.query_selector_all('p')
-                for p in paragraphs:
-                    text = p.inner_text().strip()
-                    if len(text) > 50:  # 长段落
-                        detail_info['description'] = text
-                        break
             
-            # tags: 详情页展示的标签 chips
-            tag_elements = detail_page.query_selector_all('span.badge, span.chip, [class*="tag"], [class*="label"]')
-            for tag_elem in tag_elements:
-                tag_text = tag_elem.inner_text().strip()
-                if tag_text and tag_text not in detail_info['tags']:
-                    detail_info['tags'].append(tag_text)
+            # 如果没有 meta，从内容区域的首个长段落提取
+            if not detail_info['description']:
+                # 查找主要内容区域的第一个长段落（通常在 h2 之前）
+                content_section = detail_page.query_selector('div.font-inter.text-base, div[class*="max-w-[1200px]"]')
+                if content_section:
+                    paragraphs = content_section.query_selector_all('p')
+                    for p in paragraphs:
+                        text = p.inner_text().strip()
+                        # 跳过太短的段落，选择第一个有意义的描述段落
+                        if len(text) > 100 and not text.startswith('•') and not text.startswith('1.'):
+                            detail_info['description'] = text
+                            break
+                
+                # 如果还没找到，查找所有段落中的第一个长段落
+                if not detail_info['description']:
+                    paragraphs = detail_page.query_selector_all('p.font-inter')
+                    for p in paragraphs:
+                        text = p.inner_text().strip()
+                        if len(text) > 100:
+                            detail_info['description'] = text
+                            break
+            
+            # tags: 详情页展示的标签（根据实际HTML结构，标签是 div 而不是 span）
+            # 标签特征：font-jetbrains-mono, border, px-2, text-xs
+            # 使用JavaScript查找标签元素
+            tag_texts = detail_page.evaluate("""
+                () => {
+                    const tags = [];
+                    // 查找所有可能的标签元素
+                    const selectors = [
+                        'div.font-jetbrains-mono',
+                        'div[class*="border"][class*="px-2"]',
+                        'span.badge',
+                        'span.chip',
+                        '[class*="tag"]',
+                        '[class*="label"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            const text = el.textContent.trim();
+                            // 检查是否是标签：短文本，且在标题下方
+                            if (text && text.length < 50 && text.length > 0) {
+                                const classes = el.className || '';
+                                // 检查是否有标签的特征类名
+                                if (classes.includes('border') || 
+                                    classes.includes('badge') || 
+                                    classes.includes('chip') ||
+                                    classes.includes('tag') ||
+                                    classes.includes('label') ||
+                                    (classes.includes('font-jetbrains-mono') && classes.includes('px-2'))) {
+                                    // 排除明显不是标签的文本
+                                    if (!['View Profile', 'Back to Explore', 'RUN', 'Verified'].includes(text)) {
+                                        tags.push(text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return [...new Set(tags)]; // 去重
+                }
+            """)
+            if tag_texts:
+                detail_info['tags'] = tag_texts
+            
+            # approx_run_cost: 运行成本（价格信息）
+            # 使用JavaScript查找价格信息（格式：数字 / run (approx.)）
+            price_info = detail_page.evaluate("""
+                () => {
+                    // 查找包含价格信息的元素
+                    const elements = document.querySelectorAll('div');
+                    for (const el of elements) {
+                        const text = el.textContent || '';
+                        // 匹配格式：数字 / run (approx.)
+                        const match = text.match(/(\\d+)\\s*\\/\\s*run\\s*\\(approx\\.\\)/i);
+                        if (match) {
+                            return match[1];
+                        }
+                        // 也尝试匹配其他格式
+                        const match2 = text.match(/(\\d+)\\s*\\/\\s*run/i);
+                        if (match2 && text.toLowerCase().includes('approx')) {
+                            return match2[1];
+                        }
+                    }
+                    return null;
+                }
+            """)
+            if price_info:
+                detail_info['approx_run_cost'] = int(price_info)
             
             # stats: 运行数、点赞/收藏数等（数字+标签对）
             # 查找包含数字和标签的统计信息

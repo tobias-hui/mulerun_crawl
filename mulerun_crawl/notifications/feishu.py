@@ -81,7 +81,7 @@ class FeishuNotifier:
         发送 agent 下架通知
         
         Args:
-            removed_agents: 下架的 agent 列表，每个元素包含 link, name 等信息
+            removed_agents: 下架的 agent 列表，每个元素包含 link, name, author, description 等信息
             
         Returns:
             bool: 是否发送成功
@@ -91,26 +91,98 @@ class FeishuNotifier:
         
         if len(removed_agents) == 1:
             agent = removed_agents[0]
+            description = agent.get('description', '暂无描述')
+            # 限制描述长度，避免消息过长
+            if description and len(description) > 200:
+                description = description[:200] + "..."
+            
             text = f"""⚠️ Agent 下架通知
 
 📛 名称: {agent.get('name', 'Unknown')}
 🔗 链接: https://mulerun.com{agent.get('link', '')}
 👤 作者: {agent.get('author', 'Unknown')}
+📝 描述: {description}
 
 该 agent 已从 MuleRun 下架"""
         else:
-            agent_list = "\n".join([
-                f"• {agent.get('name', 'Unknown')} ({agent.get('author', 'Unknown')})"
-                for agent in removed_agents[:10]  # 最多显示10个
-            ])
-            if len(removed_agents) > 10:
-                agent_list += f"\n... 还有 {len(removed_agents) - 10} 个"
+            agent_list = []
+            for agent in removed_agents[:5]:  # 批量通知最多显示5个详细信息
+                description = agent.get('description', '暂无描述')
+                if description and len(description) > 100:
+                    description = description[:100] + "..."
+                agent_list.append(
+                    f"• {agent.get('name', 'Unknown')} ({agent.get('author', 'Unknown')})\n"
+                    f"  📝 {description}"
+                )
+            
+            if len(removed_agents) > 5:
+                agent_list.append(f"\n... 还有 {len(removed_agents) - 5} 个")
+            
+            agent_list_text = "\n\n".join(agent_list)
             
             text = f"""⚠️ 批量 Agent 下架通知
 
 共发现 {len(removed_agents)} 个 agents 下架：
 
-{agent_list}
+{agent_list_text}
+
+请查看详情: https://mulerun.com"""
+        
+        return self.send_text(text)
+    
+    def send_agent_added_notification(self, new_agents: List[Dict]) -> bool:
+        """
+        发送 agent 上架通知
+        
+        Args:
+            new_agents: 新上架的 agent 列表，每个元素包含 link, name, author, description, rank 等信息
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        if not self.enabled or not new_agents:
+            return False
+        
+        if len(new_agents) == 1:
+            agent = new_agents[0]
+            description = agent.get('description', '暂无描述')
+            # 限制描述长度，避免消息过长
+            if description and len(description) > 200:
+                description = description[:200] + "..."
+            
+            rank_info = f"🏆 排名: {agent.get('rank', 'N/A')}" if agent.get('rank') else ""
+            
+            text = f"""🎉 Agent 上架通知
+
+📛 名称: {agent.get('name', 'Unknown')}
+🔗 链接: https://mulerun.com{agent.get('link', '')}
+👤 作者: {agent.get('author', 'Unknown')}
+{rank_info}
+📝 描述: {description}
+
+新 agent 已上架 MuleRun！"""
+        else:
+            agent_list = []
+            for agent in new_agents[:5]:  # 批量通知最多显示5个详细信息
+                description = agent.get('description', '暂无描述')
+                if description and len(description) > 100:
+                    description = description[:100] + "..."
+                rank_info = f" - 排名: {agent.get('rank', 'N/A')}" if agent.get('rank') else ""
+                agent_list.append(
+                    f"• {agent.get('name', 'Unknown')} ({agent.get('author', 'Unknown')}){rank_info}\n"
+                    f"  📝 {description}"
+                )
+            
+            if len(new_agents) > 5:
+                agent_list.append(f"\n... 还有 {len(new_agents) - 5} 个")
+            
+            agent_list_text = "\n\n".join(agent_list)
+            
+            text = f"""🎉 批量 Agent 上架通知
+
+共发现 {len(new_agents)} 个新 agents 上架：
+
+{agent_list_text}
 
 请查看详情: https://mulerun.com"""
         

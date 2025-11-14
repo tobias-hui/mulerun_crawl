@@ -109,7 +109,7 @@ class DatabaseStorage:
             conn.commit()
             logger.info("数据库表初始化完成")
     
-    def save_agents(self, agents: List[Dict], crawl_time: datetime = None) -> List[Dict]:
+    def save_agents(self, agents: List[Dict], crawl_time: datetime = None) -> tuple[List[Dict], List[Dict]]:
         """
         保存 agent 数据
         
@@ -125,24 +125,30 @@ class DatabaseStorage:
             crawl_time: 爬取时间，默认为当前时间
             
         Returns:
-            List[Dict]: 下架的 agents 列表（包含 link, name, author 等信息）
+            tuple[List[Dict], List[Dict]]: (下架的 agents 列表, 新上架的 agents 列表)
+                每个元素包含 link, name, author, description 等信息
         """
         if crawl_time is None:
             crawl_time = datetime.now()
         
         removed_agents = []
+        new_agents = []
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # 获取当前所有活跃的 agent links 和详细信息
+            # 获取当前所有活跃的 agent links 和详细信息（包括description）
             cursor.execute("""
-                SELECT link, name, author 
+                SELECT link, name, author, description 
                 FROM agents 
                 WHERE is_active = TRUE
             """)
-            existing_agents = {row[0]: {'link': row[0], 'name': row[1], 'author': row[2]} 
-                              for row in cursor.fetchall()}
+            existing_agents = {row[0]: {
+                'link': row[0], 
+                'name': row[1], 
+                'author': row[2],
+                'description': row[3]
+            } for row in cursor.fetchall()}
             existing_links = set(existing_agents.keys())
             
             # 当前爬取的 agent links
@@ -160,6 +166,21 @@ class DatabaseStorage:
                     WHERE link = ANY(%s)
                 """, (crawl_time, list(disappeared_links)))
                 logger.info(f"标记了 {len(disappeared_links)} 个下架的 agents")
+            
+            # 检测新上架的 agents（不在数据库中的）
+            new_links = current_links - existing_links
+            if new_links:
+                new_agents = [
+                    {
+                        'link': agent['link'],
+                        'name': agent['name'],
+                        'author': agent.get('author'),
+                        'description': agent.get('description'),
+                        'rank': agent.get('rank')
+                    }
+                    for agent in agents if agent['link'] in new_links
+                ]
+                logger.info(f"发现 {len(new_agents)} 个新上架的 agents")
             
             # 插入或更新 agents
             for agent in agents:
@@ -198,7 +219,7 @@ class DatabaseStorage:
             
             logger.info(f"成功保存 {len(agents)} 个 agents")
             
-            return removed_agents
+            return removed_agents, new_agents
     
     def get_active_agents(self, limit: Optional[int] = None) -> List[Dict]:
         """获取所有活跃的 agents"""

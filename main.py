@@ -48,13 +48,15 @@ def main():
             # 保存数据
             storage = DatabaseStorage()
             crawl_time = datetime.now()
-            removed_agents = storage.save_agents(agents, crawl_time)
+            removed_agents, new_agents = storage.save_agents(agents, crawl_time)
             
             # 发送飞书通知
             from mulerun_crawl.notifications import FeishuNotifier
             notifier = FeishuNotifier()
             if removed_agents:
                 notifier.send_agent_removed_notification(removed_agents)
+            if new_agents:
+                notifier.send_agent_added_notification(new_agents)
             notifier.send_crawl_summary(storage.get_statistics(), crawl_time)
             
             # 输出统计信息

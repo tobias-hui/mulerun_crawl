@@ -41,7 +41,7 @@ async def run_crawl_task(task_id: str) -> Dict[str, Any]:
         storage = DatabaseStorage()
         try:
             crawl_time = datetime.now()
-            removed_agents = storage.save_agents(agents, crawl_time)
+            removed_agents, new_agents = storage.save_agents(agents, crawl_time)
             
             # 获取统计信息
             stats = storage.get_statistics()
@@ -50,16 +50,19 @@ async def run_crawl_task(task_id: str) -> Dict[str, Any]:
             notifier = FeishuNotifier()
             if removed_agents:
                 notifier.send_agent_removed_notification(removed_agents)
+            if new_agents:
+                notifier.send_agent_added_notification(new_agents)
             notifier.send_crawl_summary(stats, crawl_time)
             
             result = {
                 "agents_count": len(agents),
                 "statistics": stats,
-                "removed_agents_count": len(removed_agents)
+                "removed_agents_count": len(removed_agents),
+                "new_agents_count": len(new_agents)
             }
             
             task_service.complete_task(task_id, result)
-            logger.info(f"爬取任务完成: {task_id}, 爬取到 {len(agents)} 个 agents, 下架 {len(removed_agents)} 个")
+            logger.info(f"爬取任务完成: {task_id}, 爬取到 {len(agents)} 个 agents, 下架 {len(removed_agents)} 个, 新增 {len(new_agents)} 个")
             
             return result
             
@@ -93,7 +96,7 @@ def run_crawl_sync() -> Dict[str, Any]:
         storage = DatabaseStorage()
         try:
             crawl_time = datetime.now()
-            removed_agents = storage.save_agents(agents, crawl_time)
+            removed_agents, new_agents = storage.save_agents(agents, crawl_time)
             
             # 获取统计信息
             stats = storage.get_statistics()
@@ -102,16 +105,19 @@ def run_crawl_sync() -> Dict[str, Any]:
             notifier = FeishuNotifier()
             if removed_agents:
                 notifier.send_agent_removed_notification(removed_agents)
+            if new_agents:
+                notifier.send_agent_added_notification(new_agents)
             notifier.send_crawl_summary(stats, crawl_time)
             
             result = {
                 "agents_count": len(agents),
                 "statistics": stats,
                 "crawl_time": crawl_time.isoformat(),
-                "removed_agents_count": len(removed_agents)
+                "removed_agents_count": len(removed_agents),
+                "new_agents_count": len(new_agents)
             }
             
-            logger.info(f"定时爬取任务完成, 爬取到 {len(agents)} 个 agents, 下架 {len(removed_agents)} 个")
+            logger.info(f"定时爬取任务完成, 爬取到 {len(agents)} 个 agents, 下架 {len(removed_agents)} 个, 新增 {len(new_agents)} 个")
             return result
             
         finally:

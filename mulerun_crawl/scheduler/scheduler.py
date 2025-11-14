@@ -47,7 +47,7 @@ class CrawlScheduler:
                 return
             
             # 保存数据
-            removed_agents = self.storage.save_agents(agents, crawl_time)
+            removed_agents, new_agents = self.storage.save_agents(agents, crawl_time)
             
             # 获取统计信息
             stats = self.storage.get_statistics()
@@ -56,6 +56,8 @@ class CrawlScheduler:
             notifier = FeishuNotifier()
             if removed_agents:
                 notifier.send_agent_removed_notification(removed_agents)
+            if new_agents:
+                notifier.send_agent_added_notification(new_agents)
             notifier.send_crawl_summary(stats, crawl_time)
             
             # 输出统计信息
