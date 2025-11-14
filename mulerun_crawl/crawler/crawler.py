@@ -155,23 +155,76 @@ class MuleRunCrawler:
                         logger.info("重试后仍未找到项目，停止加载")
                         break
                 
-                # 提取当前批次的 agent 信息
-                batch_count = 0
+                # 提取所有项目的排名和URL信息，用于判断哪些是新项目
+                items_with_rank = []
                 for item in items:
                     try:
-                        # agent_url: a@href（转为绝对 URL）
                         href = item.get_attribute('href') or ''
                         agent_url = urljoin(self.base_url, href) if href else ''
+                        rank_elem = item.query_selector('span.font-anton')
+                        rank_text = rank_elem.inner_text().strip() if rank_elem else ''
+                        
+                        # 尝试解析排名数字
+                        rank_num = None
+                        if rank_text:
+                            rank_match = re.search(r'(\d+)', rank_text)
+                            if rank_match:
+                                rank_num = int(rank_match.group(1))
+                        
+                        if agent_url and rank_num is not None:
+                            items_with_rank.append({
+                                'item': item,
+                                'url': agent_url,
+                                'rank': rank_num,
+                                'rank_text': rank_text
+                            })
+                    except:
+                        continue
+                
+                # 按排名排序，获取当前应该提取的6个项目
+                # 如果这是第一次提取，取排名最小的6个（1-6）
+                if len(top_picks) == 0:
+                    # 第一次提取，取排名最小的6个
+                    items_with_rank.sort(key=lambda x: x['rank'])
+                    target_items = items_with_rank[:6]
+                    logger.info(f"首次提取，选择排名最小的6个项目: {[x['rank'] for x in target_items]}")
+                else:
+                    # 后续提取：找到已提取的最大排名，提取下一个范围的6个新项目
+                    max_extracted_rank = 0
+                    for agent in top_picks:
+                        rank_str = agent.get('rank', '')
+                        if rank_str:
+                            rank_match = re.search(r'(\d+)', str(rank_str))
+                            if rank_match:
+                                max_extracted_rank = max(max_extracted_rank, int(rank_match.group(1)))
+                    
+                    # 提取排名大于 max_extracted_rank 的新项目，取最小的6个（下一个范围的6个）
+                    new_items = [
+                        x for x in items_with_rank 
+                        if x['rank'] > max_extracted_rank and x['url'] not in seen_urls
+                    ]
+                    new_items.sort(key=lambda x: x['rank'])
+                    target_items = new_items[:6]
+                    
+                    if target_items:
+                        expected_ranks = [x['rank'] for x in target_items]
+                        logger.info(f"已提取最大排名: {max_extracted_rank}，选择下一个范围的6个新项目: {expected_ranks}")
+                    else:
+                        logger.info(f"已提取最大排名: {max_extracted_rank}，未找到新的项目")
+                
+                # 提取目标项目的详细信息
+                batch_count = 0
+                for item_info in target_items:
+                    try:
+                        item = item_info['item']
+                        agent_url = item_info['url']
+                        rank = item_info['rank_text']
                         
                         # 跳过已处理的 URL
-                        if not agent_url or agent_url in seen_urls:
+                        if agent_url in seen_urls:
                             continue
                         
                         seen_urls.add(agent_url)
-                        
-                        # rank: span.font-anton 的文本
-                        rank_elem = item.query_selector('span.font-anton')
-                        rank = rank_elem.inner_text().strip() if rank_elem else str(len(top_picks) + 1)
                         
                         # title: 卡片内 div[title] 或 .text-sm 的文本；优先取 @title
                         title = item.get_attribute('title') or ''
@@ -211,7 +264,8 @@ class MuleRunCrawler:
                 if batch_count == 0:
                     # 如果没有新项目，检查是否是因为所有项目都已处理
                     if len(items) <= len(seen_urls):
-                        logger.info("所有可见项目都已处理，尝试加载更多...")
+                        logger.info("所有可见项目都已处理，停止加载")
+                        break
                     else:
                         logger.info("当前批次没有新项目，停止加载")
                         break
