@@ -608,8 +608,60 @@ class MuleRunCrawler:
                     # 添加延迟避免请求过快
                     time.sleep(0.5)
             
-            logger.info(f"成功爬取 {len(all_agents)} 个 agents")
-            return all_agents
+            # 映射字段名到数据库期望的格式
+            mapped_agents = []
+            for idx, agent in enumerate(all_agents, start=1):
+                try:
+                    # 处理 rank（优先使用原始 rank，否则使用索引）
+                    rank_value = idx  # 默认使用索引
+                    rank_str = agent.get('rank')
+                    if rank_str:
+                        try:
+                            # 尝试从 rank 字符串中提取数字
+                            rank_match = re.search(r'(\d+)', str(rank_str))
+                            if rank_match:
+                                rank_value = int(rank_match.group(1))
+                        except:
+                            pass
+                    
+                    # 字段映射
+                    mapped_agent = {
+                        'link': agent.get('agent_url', ''),
+                        'name': agent.get('agent_name') or agent.get('title', ''),
+                        'description': agent.get('description'),
+                        'avatar_url': agent.get('cover_image'),
+                        'price': None,
+                        'author': agent.get('author') or agent.get('owner_handle'),
+                        'rank': rank_value,
+                    }
+                    
+                    # 处理 price 字段（approx_run_cost）
+                    approx_cost = agent.get('approx_run_cost')
+                    if approx_cost is not None:
+                        mapped_agent['price'] = f"{approx_cost} / run (approx.)"
+                    
+                    # 保留原始字段和详情页字段（用于扩展）
+                    mapped_agent['section'] = agent.get('section')
+                    mapped_agent['active_category'] = agent.get('active_category')
+                    mapped_agent['tags'] = agent.get('tags', [])
+                    mapped_agent['stats'] = agent.get('stats', {})
+                    mapped_agent['version'] = agent.get('version')
+                    mapped_agent['last_updated'] = agent.get('last_updated')
+                    mapped_agent['inputs_schema'] = agent.get('inputs_schema', [])
+                    mapped_agent['external_links'] = agent.get('external_links', [])
+                    
+                    # 确保必需字段存在
+                    if mapped_agent['link'] and mapped_agent['name']:
+                        mapped_agents.append(mapped_agent)
+                    else:
+                        logger.warning(f"跳过无效 agent: {agent}")
+                
+                except Exception as e:
+                    logger.error(f"映射 agent 字段失败: {e}")
+                    continue
+            
+            logger.info(f"成功爬取 {len(mapped_agents)} 个 agents")
+            return mapped_agents
             
         except Exception as e:
             logger.error(f"爬取过程出错: {e}", exc_info=True)
