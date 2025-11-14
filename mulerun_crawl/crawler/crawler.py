@@ -58,23 +58,23 @@ class MuleRunCrawler:
         """
         logger.info(f"开始滚动页面 {times} 次以触发懒加载...")
         for i in range(times):
-        # 滚动到底部
-        self.page.evaluate("""
-            window.scrollTo({
-                top: document.body.scrollHeight,
-                behavior: 'smooth'
-            })
-        """)
-        
-        # 等待内容加载
-        time.sleep(self.config['scroll_delay'])
-        
-        # 等待可能的加载动画
-        try:
-            self.page.wait_for_load_state('networkidle', timeout=5000)
-        except:
-            pass
-        
+            # 滚动到底部
+            self.page.evaluate("""
+                window.scrollTo({
+                    top: document.body.scrollHeight,
+                    behavior: 'smooth'
+                })
+            """)
+            
+            # 等待内容加载
+            time.sleep(self.config['scroll_delay'])
+            
+            # 等待可能的加载动画
+            try:
+                self.page.wait_for_load_state('networkidle', timeout=5000)
+            except:
+                pass
+            
             logger.info(f"已完成第 {i + 1}/{times} 次滚动")
     
     def _get_active_category(self) -> Optional[str]:
