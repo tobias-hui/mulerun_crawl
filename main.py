@@ -68,6 +68,10 @@ def main():
             
             storage.close()
             
+        except KeyboardInterrupt:
+            logger.info("\n收到中断信号 (Ctrl+C)，正在退出...")
+            logger.info("浏览器资源已清理")
+            return
         except Exception as e:
             logger.error(f"执行失败: {e}", exc_info=True)
             raise

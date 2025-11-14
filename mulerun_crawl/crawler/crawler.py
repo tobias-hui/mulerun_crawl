@@ -219,31 +219,33 @@ class MuleRunCrawler:
                 logger.info(f"已提取 {len(top_picks)} 个 Top Picks 项目（本批次新增 {batch_count} 个）")
                 
                 # 查找右侧按钮（用于加载下一组）
-                # 每次重新查找按钮，因为页面可能已更新
-                # 按钮特征：在 Top Picks 容器内，位置在右侧，包含 SVG
+                # 根据HTML结构：按钮在 group 容器内，位置 absolute，右侧按钮在 -right-[17px]
                 next_button = None
                 try:
-                    # 方法1: 通过 JavaScript 查找按钮（更可靠）
-                    button_found = self.page.evaluate("""
+                    # 方法1: 使用JavaScript精确查找右箭头按钮
+                    button_info = self.page.evaluate("""
                         () => {
-                            // 查找包含 Top Picks 的容器
-                            const containers = Array.from(document.querySelectorAll('div'));
-                            let topPicksContainer = null;
+                            // 查找包含 Top Picks 的 group 容器
+                            const containers = Array.from(document.querySelectorAll('div.font-inter-sans.group'));
+                            let targetContainer = null;
                             
                             for (const container of containers) {
-                                if (container.textContent && container.textContent.includes('Top Picks')) {
-                                    const items = container.querySelectorAll('a[data-slot="explore-recommend-item"]');
-                                    if (items.length > 0) {
-                                        topPicksContainer = container;
+                                const items = container.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                if (items.length > 0) {
+                                    // 检查是否包含 Top Picks 相关的内容
+                                    const text = container.textContent || '';
+                                    if (text.includes('Top Picks') || items.length >= 6) {
+                                        targetContainer = container;
                                         break;
                                     }
                                 }
                             }
                             
-                            if (!topPicksContainer) return null;
+                            if (!targetContainer) return null;
                             
-                            // 查找右侧按钮
-                            const buttons = topPicksContainer.querySelectorAll('button');
+                            // 查找右侧按钮（右箭头）
+                            // 按钮特征：absolute定位，在右侧，包含SVG，且SVG没有transform: scaleX(-1)
+                            const buttons = targetContainer.querySelectorAll('button');
                             const viewportWidth = window.innerWidth;
                             
                             for (const btn of buttons) {
@@ -252,15 +254,20 @@ class MuleRunCrawler:
                                 
                                 const rect = btn.getBoundingClientRect();
                                 const style = window.getComputedStyle(btn);
+                                const svgStyle = window.getComputedStyle(svg);
                                 
-                                // 检查是否在右侧，且不是 disabled
-                                if (rect.right > viewportWidth - 100 && 
-                                    !btn.hasAttribute('disabled')) {
+                                // 检查是否在右侧（right < 50px from viewport edge）
+                                // 且SVG没有水平翻转（右箭头）
+                                const isRightSide = rect.right > viewportWidth - 50;
+                                const isNotFlipped = !svgStyle.transform || !svgStyle.transform.includes('scaleX(-1)');
+                                
+                                if (isRightSide && isNotFlipped && !btn.hasAttribute('disabled')) {
                                     return {
                                         found: true,
                                         x: rect.x,
                                         y: rect.y,
-                                        right: rect.right
+                                        width: rect.width,
+                                        height: rect.height
                                     };
                                 }
                             }
@@ -268,8 +275,8 @@ class MuleRunCrawler:
                         }
                     """)
                     
-                    if button_found:
-                        # 如果找到按钮信息，通过位置查找按钮
+                    if button_info:
+                        # 通过位置和特征查找按钮
                         buttons = self.page.query_selector_all('button')
                         for btn in buttons:
                             try:
@@ -278,48 +285,59 @@ class MuleRunCrawler:
                                     continue
                                 
                                 rect = btn.bounding_box()
-                                if rect and abs(rect['x'] - button_found['x']) < 10:
-                                    is_disabled = btn.get_attribute('disabled') is not None
-                                    if not is_disabled:
-                                        next_button = btn
-                                        break
-                            except:
-                                continue
-                    
-                    # 方法2: 如果方法1失败，使用原来的查找逻辑
-                    if not next_button:
-                        containers = self.page.query_selector_all('div')
-                        for container in containers:
-                            try:
-                                text = container.inner_text()
-                                if 'Top Picks' in text:
-                                    container_items = container.query_selector_all('a[data-slot="explore-recommend-item"]')
-                                    if container_items:
-                                        buttons = container.query_selector_all('button')
-                                        for btn in buttons:
-                                            try:
-                                                svg = btn.query_selector('svg')
-                                                if not svg:
-                                                    continue
-                                                
-                                                rect = btn.bounding_box()
-                                                if rect:
-                                                    viewport_width = self.page.viewport_size['width'] if self.page.viewport_size else 1920
-                                                    if rect['x'] + rect['width'] > viewport_width - 100:
-                                                        is_disabled = btn.get_attribute('disabled') is not None
-                                                        if not is_disabled:
-                                                            next_button = btn
-                                                            break
-                                            except:
-                                                continue
-                                        
-                                        if next_button:
+                                if not rect:
+                                    continue
+                                
+                                # 检查位置是否匹配（允许10px误差）
+                                if (abs(rect['x'] - button_info['x']) < 10 and 
+                                    abs(rect['y'] - button_info['y']) < 10):
+                                    # 检查SVG是否没有翻转（右箭头）
+                                    svg_transform = svg.evaluate('el => window.getComputedStyle(el).transform')
+                                    if not svg_transform or 'scaleX(-1)' not in str(svg_transform):
+                                        is_disabled = btn.get_attribute('disabled') is not None
+                                        if not is_disabled:
+                                            next_button = btn
                                             break
                             except:
                                 continue
-                            
-                            if next_button:
-                                break
+                    
+                    # 方法2: 如果方法1失败，使用CSS选择器尝试
+                    if not next_button:
+                        # 尝试查找 group 容器内的右箭头按钮
+                        group_containers = self.page.query_selector_all('div.group.relative')
+                        for group in group_containers:
+                            try:
+                                items = group.query_selector_all('a[data-slot="explore-recommend-item"]')
+                                if len(items) > 0:
+                                    # 查找右侧按钮
+                                    buttons = group.query_selector_all('button')
+                                    for btn in buttons:
+                                        try:
+                                            svg = btn.query_selector('svg')
+                                            if not svg:
+                                                continue
+                                            
+                                            # 检查SVG是否没有翻转
+                                            svg_style = svg.evaluate('el => window.getComputedStyle(el).transform')
+                                            if svg_style and 'scaleX(-1)' in str(svg_style):
+                                                continue  # 这是左箭头，跳过
+                                            
+                                            rect = btn.bounding_box()
+                                            if rect:
+                                                viewport_width = self.page.viewport_size['width'] if self.page.viewport_size else 1920
+                                                # 检查是否在右侧
+                                                if rect['x'] + rect['width'] > viewport_width - 50:
+                                                    is_disabled = btn.get_attribute('disabled') is not None
+                                                    if not is_disabled:
+                                                        next_button = btn
+                                                        break
+                                        except:
+                                            continue
+                                    
+                                    if next_button:
+                                        break
+                            except:
+                                continue
                                 
                 except Exception as e:
                     logger.debug(f"查找按钮失败: {e}")
@@ -386,85 +404,95 @@ class MuleRunCrawler:
                     next_button.click()
                     logger.info("按钮已点击，等待新内容加载...")
                     
-                    # 等待新内容加载 - 轮播替换逻辑
-                    # 阶段1: 等待DOM开始更新（可能短暂出现0个元素）
-                    time.sleep(1)
+                    # 等待新内容加载 - 改进的轮播检测逻辑
+                    # 阶段1: 短暂等待DOM开始更新
+                    time.sleep(0.5)
                     
-                    # 阶段2: 等待新项目出现（通过检查是否有新的URL或排名）
-                    max_wait = 15  # 最多等待15秒
-                    wait_interval = 0.3
+                    # 阶段2: 轮询检测新内容（考虑轮播完全替换的情况）
+                    max_wait = 8  # 最多等待8秒
+                    wait_interval = 0.2
                     waited = 0
                     new_items_found = False
+                    stable_count = 0  # 连续稳定次数
                     
                     while waited < max_wait:
                         try:
-                            # 重新查询所有项目
-                            current_items = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
+                            result = self.page.evaluate("""
+                                () => {
+                                    const container = document.querySelector('div.font-inter-sans.group');
+                                    if (!container) return null;
+                                    
+                                    const items = container.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                    const urls = Array.from(items).map(item => {
+                                        const href = item.getAttribute('href') || '';
+                                        return href;
+                                    }).filter(Boolean);
+                                    
+                                    const ranks = Array.from(items).map(item => {
+                                        const rankEl = item.querySelector('span.font-anton');
+                                        return rankEl ? rankEl.textContent.trim() : '';
+                                    }).filter(Boolean);
+                                    
+                                    return {
+                                        count: items.length,
+                                        urls: urls,
+                                        ranks: ranks
+                                    };
+                                }
+                            """)
                             
-                            # 如果找到项目（数量大于0），检查是否有新内容
-                            if len(current_items) > 0:
-                                current_urls = set()
-                                current_ranks = set()
+                            if result and result['count'] > 0:
+                                current_urls = set(result['urls'])
+                                current_ranks = set(result['ranks'])
                                 
-                                for item in current_items:
-                                    try:
-                                        href = item.get_attribute('href') or ''
-                                        if href:
-                                            current_urls.add(href)
-                                        
-                                        rank_elem = item.query_selector('span.font-anton')
-                                        if rank_elem:
-                                            rank_text = rank_elem.inner_text().strip()
-                                            current_ranks.add(rank_text)
-                                    except:
-                                        pass
-                                
-                                # 检查是否有新的URL（不在之前的集合中）
+                                # 检查是否有新内容（新URL或新排名）
                                 new_urls = current_urls - urls_before
-                                if new_urls:
-                                    logger.info(f"发现 {len(new_urls)} 个新URL: {sorted([url.split('/')[-1] for url in new_urls])}")
-                                    new_items_found = True
-                                    # 再等待一下确保所有项目都加载完成
-                                    time.sleep(1)
-                                    break
-                                
-                                # 检查是否有新的排名（不在之前的集合中）
                                 new_ranks = current_ranks - ranks_before
-                                if new_ranks:
-                                    logger.info(f"发现新排名: {sorted(new_ranks)}")
-                                    new_items_found = True
-                                    # 再等待一下确保所有项目都加载完成
-                                    time.sleep(1)
-                                    break
                                 
-                                # 如果URL集合完全不同（轮播替换），也认为是新内容
-                                if current_urls and not current_urls.intersection(urls_before):
-                                    logger.info(f"检测到轮播替换，新URL集合: {sorted([url.split('/')[-1] for url in current_urls])}")
-                                    new_items_found = True
-                                    time.sleep(1)
-                                    break
-                            # 如果项目数量为0，继续等待（可能是DOM更新瞬间）
-                            elif len(current_items) == 0 and waited > 2:
-                                # 如果等待超过2秒还是0个，可能是真的没有更多内容了
-                                logger.debug(f"等待 {waited:.1f} 秒后仍为0个项目，继续等待...")
+                                # 如果URL集合完全不同（轮播完全替换），且数量>=6
+                                is_complete_replace = (current_urls and 
+                                                     len(current_urls) >= 6 and
+                                                     not current_urls.intersection(urls_before))
+                                
+                                if new_urls or new_ranks or is_complete_replace:
+                                    # 连续2次检测到相同结果，认为内容已稳定
+                                    stable_count += 1
+                                    if stable_count >= 2:
+                                        if is_complete_replace:
+                                            logger.info(f"检测到轮播替换，新URL集合: {sorted([url.split('/')[-1] for url in current_urls])}")
+                                        elif new_urls:
+                                            logger.info(f"发现 {len(new_urls)} 个新URL: {sorted([url.split('/')[-1] for url in new_urls])}")
+                                        else:
+                                            logger.info(f"发现新排名: {sorted(new_ranks)}")
+                                        
+                                        new_items_found = True
+                                        # 等待DOM稳定
+                                        time.sleep(0.3)
+                                        break
+                                else:
+                                    stable_count = 0  # 重置稳定计数
+                            elif result and result['count'] == 0:
+                                # 如果项目数量为0，可能是DOM更新中，继续等待
+                                stable_count = 0
                             
                         except Exception as e:
                             logger.debug(f"检查新项目时出错: {e}")
+                            stable_count = 0
                         
                         time.sleep(wait_interval)
                         waited += wait_interval
                     
                     if not new_items_found:
-                        logger.warning(f"等待 {waited} 秒后未发现新项目，继续处理...")
+                        logger.warning(f"等待 {waited:.1f} 秒后未发现新项目，可能已加载完所有内容")
                     
                     # 阶段3: 等待网络空闲
                     try:
-                        self.page.wait_for_load_state('networkidle', timeout=5000)
+                        self.page.wait_for_load_state('networkidle', timeout=3000)
                     except:
                         pass
                     
                     # 阶段4: 额外等待确保内容完全渲染
-                    time.sleep(1)
+                    time.sleep(0.5)
                     
                     click_count += 1
                     
@@ -800,15 +828,20 @@ class MuleRunCrawler:
             
             # 访问详情页获取额外信息
             logger.info("开始访问详情页获取额外信息...")
-            for idx, agent in enumerate(all_agents, start=1):
-                agent_url = agent.get('agent_url')
-                if agent_url:
-                    logger.info(f"处理详情页 {idx}/{len(all_agents)}: {agent_url}")
-                    detail_info = self._extract_detail_page_info(agent_url)
-                    # 合并详情页信息
-                    agent.update(detail_info)
-                    # 添加延迟避免请求过快
-                    time.sleep(0.5)
+            idx = 0
+            try:
+                for idx, agent in enumerate(all_agents, start=1):
+                    agent_url = agent.get('agent_url')
+                    if agent_url:
+                        logger.info(f"处理详情页 {idx}/{len(all_agents)}: {agent_url}")
+                        detail_info = self._extract_detail_page_info(agent_url)
+                        # 合并详情页信息
+                        agent.update(detail_info)
+                        # 添加延迟避免请求过快
+                        time.sleep(0.5)
+            except KeyboardInterrupt:
+                logger.warning(f"\n收到中断信号，已处理 {idx}/{len(all_agents)} 个详情页，停止处理剩余页面")
+                raise
             
             # 映射字段名到数据库期望的格式
             mapped_agents = []
@@ -865,6 +898,9 @@ class MuleRunCrawler:
             logger.info(f"成功爬取 {len(mapped_agents)} 个 agents")
             return mapped_agents
             
+        except KeyboardInterrupt:
+            logger.warning("爬取过程被用户中断")
+            raise
         except Exception as e:
             logger.error(f"爬取过程出错: {e}", exc_info=True)
             raise
