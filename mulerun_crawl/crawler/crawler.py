@@ -58,23 +58,23 @@ class MuleRunCrawler:
         """
         logger.info(f"开始滚动页面 {times} 次以触发懒加载...")
         for i in range(times):
-            # 滚动到底部
-            self.page.evaluate("""
-                window.scrollTo({
-                    top: document.body.scrollHeight,
-                    behavior: 'smooth'
-                })
-            """)
-            
-            # 等待内容加载
-            time.sleep(self.config['scroll_delay'])
-            
-            # 等待可能的加载动画
-            try:
-                self.page.wait_for_load_state('networkidle', timeout=5000)
-            except:
-                pass
-            
+        # 滚动到底部
+        self.page.evaluate("""
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: 'smooth'
+            })
+        """)
+        
+        # 等待内容加载
+        time.sleep(self.config['scroll_delay'])
+        
+        # 等待可能的加载动画
+        try:
+            self.page.wait_for_load_state('networkidle', timeout=5000)
+        except:
+            pass
+        
             logger.info(f"已完成第 {i + 1}/{times} 次滚动")
     
     def _get_active_category(self) -> Optional[str]:
@@ -139,9 +139,21 @@ class MuleRunCrawler:
             click_count = 0
             
             while click_count < max_clicks:
-                # 提取当前可见的所有列表项
+                # 等待页面稳定
+                time.sleep(0.5)
+                
+                # 提取当前可见的所有列表项（每次重新查询，避免使用过期的元素）
                 items = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
                 logger.info(f"当前可见 {len(items)} 个 Top Picks 项目")
+                
+                if len(items) == 0:
+                    logger.warning("未找到任何 Top Picks 项目，可能页面结构已变化")
+                    # 等待一下再重试
+                    time.sleep(2)
+                    items = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
+                    if len(items) == 0:
+                        logger.info("重试后仍未找到项目，停止加载")
+                        break
                 
                 # 提取当前批次的 agent 信息
                 batch_count = 0
@@ -197,59 +209,118 @@ class MuleRunCrawler:
                         continue
                 
                 if batch_count == 0:
-                    logger.info("当前批次没有新项目，停止加载")
-                    break
+                    # 如果没有新项目，检查是否是因为所有项目都已处理
+                    if len(items) <= len(seen_urls):
+                        logger.info("所有可见项目都已处理，尝试加载更多...")
+                    else:
+                        logger.info("当前批次没有新项目，停止加载")
+                        break
                 
                 logger.info(f"已提取 {len(top_picks)} 个 Top Picks 项目（本批次新增 {batch_count} 个）")
                 
                 # 查找右侧按钮（用于加载下一组）
+                # 每次重新查找按钮，因为页面可能已更新
                 # 按钮特征：在 Top Picks 容器内，位置在右侧，包含 SVG
                 next_button = None
                 try:
-                    # 先找到 Top Picks 容器
-                    top_picks_container = None
-                    containers = self.page.query_selector_all('div')
-                    for container in containers:
-                        try:
-                            text = container.inner_text()
-                            if 'Top Picks' in text:
-                                items = container.query_selector_all('a[data-slot="explore-recommend-item"]')
-                                if items:
-                                    top_picks_container = container
-                                    break
-                        except:
-                            continue
+                    # 方法1: 通过 JavaScript 查找按钮（更可靠）
+                    button_found = self.page.evaluate("""
+                        () => {
+                            // 查找包含 Top Picks 的容器
+                            const containers = Array.from(document.querySelectorAll('div'));
+                            let topPicksContainer = null;
+                            
+                            for (const container of containers) {
+                                if (container.textContent && container.textContent.includes('Top Picks')) {
+                                    const items = container.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                    if (items.length > 0) {
+                                        topPicksContainer = container;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (!topPicksContainer) return null;
+                            
+                            // 查找右侧按钮
+                            const buttons = topPicksContainer.querySelectorAll('button');
+                            const viewportWidth = window.innerWidth;
+                            
+                            for (const btn of buttons) {
+                                const svg = btn.querySelector('svg');
+                                if (!svg) continue;
+                                
+                                const rect = btn.getBoundingClientRect();
+                                const style = window.getComputedStyle(btn);
+                                
+                                // 检查是否在右侧，且不是 disabled
+                                if (rect.right > viewportWidth - 100 && 
+                                    !btn.hasAttribute('disabled')) {
+                                    return {
+                                        found: true,
+                                        x: rect.x,
+                                        y: rect.y,
+                                        right: rect.right
+                                    };
+                                }
+                            }
+                            return null;
+                        }
+                    """)
                     
-                    if top_picks_container:
-                        # 在容器内查找右侧按钮
-                        buttons = top_picks_container.query_selector_all('button')
+                    if button_found:
+                        # 如果找到按钮信息，通过位置查找按钮
+                        buttons = self.page.query_selector_all('button')
                         for btn in buttons:
                             try:
-                                # 检查是否包含 SVG
                                 svg = btn.query_selector('svg')
                                 if not svg:
                                     continue
                                 
-                                # 检查位置和状态
                                 rect = btn.bounding_box()
-                                if rect:
-                                    # 检查是否在右侧（x + width 接近窗口右边界）
-                                    viewport_width = self.page.viewport_size['width'] if self.page.viewport_size else 1920
-                                    if rect['x'] + rect['width'] > viewport_width - 100:
-                                        is_disabled = btn.get_attribute('disabled') is not None
-                                        if not is_disabled:
-                                            # 检查 opacity（可能需要 hover 才显示）
-                                            try:
-                                                opacity = btn.evaluate('el => window.getComputedStyle(el).opacity')
-                                                # 即使 opacity 为 0，也可以通过 hover 显示
-                                                next_button = btn
-                                                break
-                                            except:
-                                                next_button = btn
-                                                break
-                            except Exception as e:
-                                logger.debug(f"检查按钮失败: {e}")
+                                if rect and abs(rect['x'] - button_found['x']) < 10:
+                                    is_disabled = btn.get_attribute('disabled') is not None
+                                    if not is_disabled:
+                                        next_button = btn
+                                        break
+                            except:
                                 continue
+                    
+                    # 方法2: 如果方法1失败，使用原来的查找逻辑
+                    if not next_button:
+                        containers = self.page.query_selector_all('div')
+                        for container in containers:
+                            try:
+                                text = container.inner_text()
+                                if 'Top Picks' in text:
+                                    container_items = container.query_selector_all('a[data-slot="explore-recommend-item"]')
+                                    if container_items:
+                                        buttons = container.query_selector_all('button')
+                                        for btn in buttons:
+                                            try:
+                                                svg = btn.query_selector('svg')
+                                                if not svg:
+                                                    continue
+                                                
+                                                rect = btn.bounding_box()
+                                                if rect:
+                                                    viewport_width = self.page.viewport_size['width'] if self.page.viewport_size else 1920
+                                                    if rect['x'] + rect['width'] > viewport_width - 100:
+                                                        is_disabled = btn.get_attribute('disabled') is not None
+                                                        if not is_disabled:
+                                                            next_button = btn
+                                                            break
+                                            except:
+                                                continue
+                                        
+                                        if next_button:
+                                            break
+                            except:
+                                continue
+                            
+                            if next_button:
+                                break
+                                
                 except Exception as e:
                     logger.debug(f"查找按钮失败: {e}")
                 
@@ -275,21 +346,57 @@ class MuleRunCrawler:
                 # 点击按钮加载下一组
                 logger.info(f"点击按钮加载下一组 Top Picks (第 {click_count + 1} 次)...")
                 try:
-                    # 确保按钮可见（hover 触发显示）
-                    next_button.hover()
-                    time.sleep(0.5)
-                    next_button.click()
+                    # 记录点击前的项目数量
+                    items_before = len(self.page.query_selector_all('a[data-slot="explore-recommend-item"]'))
                     
-                    # 等待新内容加载
-                    time.sleep(self.config.get('scroll_delay', 2))
-                    
-                    # 等待可能的加载动画
+                    # 滚动到 Top Picks 区域，确保按钮可见
                     try:
-                        self.page.wait_for_load_state('networkidle', timeout=5000)
+                        top_picks_elem = self.page.query_selector('text="Top Picks"')
+                        if top_picks_elem:
+                            top_picks_elem.scroll_into_view_if_needed()
+                            time.sleep(0.5)
                     except:
                         pass
                     
+                    # 确保按钮可见（hover 触发显示）
+                    next_button.scroll_into_view_if_needed()
+                    time.sleep(0.3)
+                    next_button.hover()
+                    time.sleep(0.3)
+                    
+                    # 点击按钮
+                    next_button.click()
+                    
+                    # 等待新内容加载 - 使用更长的等待时间
+                    time.sleep(1.5)
+                    
+                    # 等待新项目出现（等待元素数量增加或新内容加载）
+                    try:
+                        # 等待至少有一个新的项目出现，或者等待网络空闲
+                        self.page.wait_for_function(
+                            f"""
+                            () => {{
+                                const items = document.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                return items.length > {items_before};
+                            }}
+                            """,
+                            timeout=10000
+                        )
+                    except:
+                        # 如果等待函数超时，尝试等待网络空闲
+                        try:
+                            self.page.wait_for_load_state('networkidle', timeout=5000)
+                        except:
+                            pass
+                    
+                    # 额外等待确保内容完全渲染
+                    time.sleep(1)
+                    
                     click_count += 1
+                    
+                    # 重新查询当前可见的项目数量
+                    items_after = len(self.page.query_selector_all('a[data-slot="explore-recommend-item"]'))
+                    logger.info(f"点击后，项目数量从 {items_before} 变为 {items_after}")
                     
                 except Exception as e:
                     logger.warning(f"点击下一组按钮失败: {e}")
