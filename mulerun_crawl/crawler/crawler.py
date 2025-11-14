@@ -219,128 +219,194 @@ class MuleRunCrawler:
                 logger.info(f"已提取 {len(top_picks)} 个 Top Picks 项目（本批次新增 {batch_count} 个）")
                 
                 # 查找右侧按钮（用于加载下一组）
-                # 根据HTML结构：按钮在 group 容器内，位置 absolute，右侧按钮在 -right-[17px]
+                # 按钮特征：在 group 容器内，默认 opacity-0，需要 hover 到 group 才显示
+                # 右侧按钮：-right-[17px]，左侧按钮：-left-[18px]
                 next_button = None
+                group_container = None
+                
                 try:
-                    # 方法1: 使用JavaScript精确查找右箭头按钮
-                    button_info = self.page.evaluate("""
-                        () => {
-                            // 查找包含 Top Picks 的 group 容器
-                            const containers = Array.from(document.querySelectorAll('div.font-inter-sans.group'));
-                            let targetContainer = null;
-                            
-                            for (const container of containers) {
-                                const items = container.querySelectorAll('a[data-slot="explore-recommend-item"]');
-                                if (items.length > 0) {
-                                    // 检查是否包含 Top Picks 相关的内容
-                                    const text = container.textContent || '';
-                                    if (text.includes('Top Picks') || items.length >= 6) {
-                                        targetContainer = container;
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            if (!targetContainer) return null;
-                            
-                            // 查找右侧按钮（右箭头）
-                            // 按钮特征：absolute定位，在右侧，包含SVG，且SVG没有transform: scaleX(-1)
-                            const buttons = targetContainer.querySelectorAll('button');
-                            const viewportWidth = window.innerWidth;
-                            
-                            for (const btn of buttons) {
-                                const svg = btn.querySelector('svg');
-                                if (!svg) continue;
-                                
-                                const rect = btn.getBoundingClientRect();
-                                const style = window.getComputedStyle(btn);
-                                const svgStyle = window.getComputedStyle(svg);
-                                
-                                // 检查是否在右侧（right < 50px from viewport edge）
-                                // 且SVG没有水平翻转（右箭头）
-                                const isRightSide = rect.right > viewportWidth - 50;
-                                const isNotFlipped = !svgStyle.transform || !svgStyle.transform.includes('scaleX(-1)');
-                                
-                                if (isRightSide && isNotFlipped && !btn.hasAttribute('disabled')) {
-                                    return {
-                                        found: true,
-                                        x: rect.x,
-                                        y: rect.y,
-                                        width: rect.width,
-                                        height: rect.height
-                                    };
-                                }
-                            }
-                            return null;
-                        }
-                    """)
+                    # 步骤1: 找到包含 Top Picks 的 group 容器
+                    group_containers = self.page.query_selector_all('div.font-inter-sans.group.relative')
                     
-                    if button_info:
-                        # 通过位置和特征查找按钮
-                        buttons = self.page.query_selector_all('button')
+                    for group in group_containers:
+                        try:
+                            items = group.query_selector_all('a[data-slot="explore-recommend-item"]')
+                            if len(items) > 0:
+                                # 检查是否包含 Top Picks（通过查找父级或文本内容）
+                                text = group.inner_text() if hasattr(group, 'inner_text') else ''
+                                # 或者检查是否有足够的项目（Top Picks 通常有6个或更多）
+                                if len(items) >= 6:
+                                    group_container = group
+                                    break
+                        except:
+                            continue
+                    
+                    # 如果没找到，尝试其他方式
+                    if not group_container:
+                        # 查找包含 "Top Picks" 文本的容器
+                        top_picks_elem = self.page.query_selector('text="Top Picks"')
+                        if top_picks_elem:
+                            # 向上查找 group 容器
+                            parent_selector = top_picks_elem.evaluate("""
+                                (el) => {
+                                    let parent = el.parentElement;
+                                    let depth = 0;
+                                    while (parent && depth < 10) {
+                                        if (parent.classList && 
+                                            parent.classList.contains('group') && 
+                                            parent.classList.contains('relative')) {
+                                            // 返回一个唯一的选择器
+                                            const items = parent.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                            if (items.length > 0) {
+                                                return 'div.font-inter-sans.group.relative';
+                                            }
+                                        }
+                                        parent = parent.parentElement;
+                                        depth++;
+                                    }
+                                    return null;
+                                }
+                            """)
+                            
+                            if parent_selector:
+                                # 重新查找
+                                found_groups = self.page.query_selector_all(parent_selector)
+                                for g in found_groups:
+                                    items = g.query_selector_all('a[data-slot="explore-recommend-item"]')
+                                    if len(items) >= 6:
+                                        group_container = g
+                                        break
+                    
+                    if not group_container:
+                        logger.debug("未找到 Top Picks 的 group 容器")
+                    else:
+                        logger.debug(f"找到 group 容器，包含 {len(group_container.query_selector_all('a[data-slot=\"explore-recommend-item\"]'))} 个项目")
+                        # 步骤2: hover 到 group 容器，使按钮显示
+                        try:
+                            group_container.scroll_into_view_if_needed()
+                            time.sleep(0.3)
+                            group_container.hover()
+                            time.sleep(0.5)  # 等待按钮显示动画
+                        except Exception as e:
+                            logger.debug(f"Hover group 容器失败: {e}")
+                        
+                        # 步骤3: 查找右侧按钮
+                        # 方法1: 通过CSS选择器查找（按钮在右侧，-right-[17px]）
+                        buttons = group_container.query_selector_all('button')
+                        
                         for btn in buttons:
                             try:
+                                # 检查按钮是否有SVG
                                 svg = btn.query_selector('svg')
                                 if not svg:
                                     continue
                                 
-                                rect = btn.bounding_box()
-                                if not rect:
-                                    continue
+                                # 检查按钮的类名或位置（右侧按钮）
+                                btn_classes = btn.get_attribute('class') or ''
                                 
-                                # 检查位置是否匹配（允许10px误差）
-                                if (abs(rect['x'] - button_info['x']) < 10 and 
-                                    abs(rect['y'] - button_info['y']) < 10):
-                                    # 检查SVG是否没有翻转（右箭头）
-                                    svg_transform = svg.evaluate('el => window.getComputedStyle(el).transform')
-                                    if not svg_transform or 'scaleX(-1)' not in str(svg_transform):
-                                        is_disabled = btn.get_attribute('disabled') is not None
-                                        if not is_disabled:
-                                            next_button = btn
-                                            break
-                            except:
-                                continue
-                    
-                    # 方法2: 如果方法1失败，使用CSS选择器尝试
-                    if not next_button:
-                        # 尝试查找 group 容器内的右箭头按钮
-                        group_containers = self.page.query_selector_all('div.group.relative')
-                        for group in group_containers:
-                            try:
-                                items = group.query_selector_all('a[data-slot="explore-recommend-item"]')
-                                if len(items) > 0:
-                                    # 查找右侧按钮
-                                    buttons = group.query_selector_all('button')
-                                    for btn in buttons:
-                                        try:
-                                            svg = btn.query_selector('svg')
-                                            if not svg:
-                                                continue
-                                            
-                                            # 检查SVG是否没有翻转
+                                # 检查是否在右侧（通过 bounding_box 或类名）
+                                rect = btn.bounding_box()
+                                if rect:
+                                    # 获取 group 容器的位置
+                                    group_rect = group_container.bounding_box()
+                                    if group_rect:
+                                        # 检查按钮是否在 group 容器的右侧
+                                        # 右侧按钮应该在 group 的右边界附近
+                                        btn_right = rect['x'] + rect['width']
+                                        group_right = group_rect['x'] + group_rect['width']
+                                        
+                                        # 按钮应该在 group 右侧外部（-right-[17px] 意味着在右侧17px处）
+                                        if btn_right >= group_right - 20:  # 允许一些误差
+                                            # 检查SVG是否没有翻转（右箭头没有 scaleX(-1)）
                                             svg_style = svg.evaluate('el => window.getComputedStyle(el).transform')
-                                            if svg_style and 'scaleX(-1)' in str(svg_style):
-                                                continue  # 这是左箭头，跳过
-                                            
-                                            rect = btn.bounding_box()
-                                            if rect:
-                                                viewport_width = self.page.viewport_size['width'] if self.page.viewport_size else 1920
-                                                # 检查是否在右侧
-                                                if rect['x'] + rect['width'] > viewport_width - 50:
+                                            if not svg_style or 'scaleX(-1)' not in str(svg_style):
+                                                # 检查按钮是否可见（opacity > 0）
+                                                opacity = btn.evaluate('el => window.getComputedStyle(el).opacity')
+                                                if float(opacity) > 0:
                                                     is_disabled = btn.get_attribute('disabled') is not None
                                                     if not is_disabled:
                                                         next_button = btn
+                                                        logger.debug(f"找到右侧按钮，位置: {rect}")
                                                         break
-                                        except:
-                                            continue
-                                    
-                                    if next_button:
-                                        break
-                            except:
+                                
+                                # 备用方法：通过类名检查（如果 bounding_box 失败）
+                                if not next_button and '-right-' in btn_classes:
+                                    svg_style = svg.evaluate('el => window.getComputedStyle(el).transform')
+                                    if not svg_style or 'scaleX(-1)' not in str(svg_style):
+                                        opacity = btn.evaluate('el => window.getComputedStyle(el).opacity')
+                                        if float(opacity) > 0:
+                                            is_disabled = btn.get_attribute('disabled') is not None
+                                            if not is_disabled:
+                                                next_button = btn
+                                                logger.debug("通过类名找到右侧按钮")
+                                                break
+                                
+                            except Exception as e:
+                                logger.debug(f"检查按钮时出错: {e}")
                                 continue
+                        
+                        # 方法2: 如果方法1失败，使用JavaScript直接查找并返回按钮信息
+                        if not next_button:
+                            # 再次确保hover
+                            try:
+                                group_container.hover()
+                                time.sleep(0.3)
+                            except:
+                                pass
+                            
+                            button_info = self.page.evaluate("""
+                                () => {
+                                    const groups = document.querySelectorAll('div.font-inter-sans.group.relative');
+                                    for (const group of groups) {
+                                        const items = group.querySelectorAll('a[data-slot="explore-recommend-item"]');
+                                        if (items.length >= 6) {
+                                            const buttons = group.querySelectorAll('button');
+                                            const groupRect = group.getBoundingClientRect();
+                                            
+                                            for (const btn of buttons) {
+                                                const svg = btn.querySelector('svg');
+                                                if (!svg) continue;
+                                                
+                                                const rect = btn.getBoundingClientRect();
+                                                const style = window.getComputedStyle(btn);
+                                                const svgStyle = window.getComputedStyle(svg);
+                                                
+                                                // 检查是否在右侧
+                                                const isRightSide = rect.right >= groupRect.right - 20;
+                                                const isNotFlipped = !svgStyle.transform || !svgStyle.transform.includes('scaleX(-1)');
+                                                const isVisible = parseFloat(style.opacity) > 0;
+                                                
+                                                if (isRightSide && isNotFlipped && isVisible && !btn.hasAttribute('disabled')) {
+                                                    return {
+                                                        found: true,
+                                                        x: rect.x,
+                                                        y: rect.y,
+                                                        width: rect.width,
+                                                        height: rect.height
+                                                    };
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return null;
+                                }
+                            """)
+                            
+                            if button_info:
+                                # 通过位置查找按钮
+                                buttons = group_container.query_selector_all('button')
+                                for btn in buttons:
+                                    try:
+                                        rect = btn.bounding_box()
+                                        if rect and abs(rect['x'] - button_info['x']) < 10:
+                                            next_button = btn
+                                            logger.debug("通过JavaScript找到右侧按钮")
+                                            break
+                                    except:
+                                        continue
                                 
                 except Exception as e:
-                    logger.debug(f"查找按钮失败: {e}")
+                    logger.debug(f"查找按钮失败: {e}", exc_info=True)
                 
                 if not next_button:
                     logger.info("未找到下一组按钮，停止加载")
@@ -387,18 +453,36 @@ class MuleRunCrawler:
                     
                     # 滚动到 Top Picks 区域，确保按钮可见
                     try:
-                        top_picks_elem = self.page.query_selector('text="Top Picks"')
-                        if top_picks_elem:
-                            top_picks_elem.scroll_into_view_if_needed()
-                            time.sleep(0.5)
-                    except:
-                        pass
+                        if group_container:
+                            group_container.scroll_into_view_if_needed()
+                            time.sleep(0.3)
+                            # 确保hover到group容器，使按钮显示
+                            group_container.hover()
+                            time.sleep(0.5)  # 等待按钮显示动画
+                        else:
+                            top_picks_elem = self.page.query_selector('text="Top Picks"')
+                            if top_picks_elem:
+                                top_picks_elem.scroll_into_view_if_needed()
+                                time.sleep(0.5)
+                    except Exception as e:
+                        logger.debug(f"滚动到Top Picks区域失败: {e}")
                     
-                    # 确保按钮可见（hover 触发显示）
-                    next_button.scroll_into_view_if_needed()
-                    time.sleep(0.3)
-                    next_button.hover()
-                    time.sleep(0.5)  # 增加hover等待时间，确保按钮显示
+                    # 确保按钮可见（再次hover group容器以确保按钮显示）
+                    try:
+                        if group_container:
+                            group_container.hover()
+                            time.sleep(0.3)
+                        next_button.scroll_into_view_if_needed()
+                        time.sleep(0.2)
+                        # 检查按钮是否可见
+                        opacity = next_button.evaluate('el => window.getComputedStyle(el).opacity')
+                        if float(opacity) == 0:
+                            # 如果按钮不可见，再次hover group容器
+                            if group_container:
+                                group_container.hover()
+                                time.sleep(0.5)
+                    except Exception as e:
+                        logger.debug(f"确保按钮可见失败: {e}")
                     
                     # 点击按钮
                     next_button.click()
