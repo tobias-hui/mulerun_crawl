@@ -58,23 +58,23 @@ class MuleRunCrawler:
         """
         logger.info(f"开始滚动页面 {times} 次以触发懒加载...")
         for i in range(times):
-            # 滚动到底部
-            self.page.evaluate("""
-                window.scrollTo({
-                    top: document.body.scrollHeight,
-                    behavior: 'smooth'
-                })
-            """)
-            
-            # 等待内容加载
-            time.sleep(self.config['scroll_delay'])
-            
-            # 等待可能的加载动画
-            try:
-                self.page.wait_for_load_state('networkidle', timeout=5000)
-            except:
-                pass
-            
+        # 滚动到底部
+        self.page.evaluate("""
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: 'smooth'
+            })
+        """)
+        
+        # 等待内容加载
+        time.sleep(self.config['scroll_delay'])
+        
+        # 等待可能的加载动画
+        try:
+            self.page.wait_for_load_state('networkidle', timeout=5000)
+        except:
+            pass
+        
             logger.info(f"已完成第 {i + 1}/{times} 次滚动")
     
     def _get_active_category(self) -> Optional[str]:
@@ -346,8 +346,26 @@ class MuleRunCrawler:
                 # 点击按钮加载下一组
                 logger.info(f"点击按钮加载下一组 Top Picks (第 {click_count + 1} 次)...")
                 try:
-                    # 记录点击前的项目数量
-                    items_before = len(self.page.query_selector_all('a[data-slot="explore-recommend-item"]'))
+                    # 记录点击前的项目信息（用于检测新内容）
+                    items_before = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
+                    urls_before = set()
+                    ranks_before = set()
+                    
+                    for item in items_before:
+                        try:
+                            href = item.get_attribute('href') or ''
+                            if href:
+                                urls_before.add(href)
+                            
+                            # 获取排名
+                            rank_elem = item.query_selector('span.font-anton')
+                            if rank_elem:
+                                rank_text = rank_elem.inner_text().strip()
+                                ranks_before.add(rank_text)
+                        except:
+                            pass
+                    
+                    logger.info(f"点击前: {len(items_before)} 个项目, {len(urls_before)} 个URL, 排名: {sorted(ranks_before)}")
                     
                     # 滚动到 Top Picks 区域，确保按钮可见
                     try:
@@ -362,44 +380,121 @@ class MuleRunCrawler:
                     next_button.scroll_into_view_if_needed()
                     time.sleep(0.3)
                     next_button.hover()
-                    time.sleep(0.3)
+                    time.sleep(0.5)  # 增加hover等待时间，确保按钮显示
                     
                     # 点击按钮
                     next_button.click()
+                    logger.info("按钮已点击，等待新内容加载...")
                     
-                    # 等待新内容加载 - 使用更长的等待时间
-                    time.sleep(1.5)
+                    # 等待新内容加载 - 轮播替换逻辑
+                    # 阶段1: 等待DOM开始更新（可能短暂出现0个元素）
+                    time.sleep(1)
                     
-                    # 等待新项目出现（等待元素数量增加或新内容加载）
-                    try:
-                        # 等待至少有一个新的项目出现，或者等待网络空闲
-                        self.page.wait_for_function(
-                            f"""
-                            () => {{
-                                const items = document.querySelectorAll('a[data-slot="explore-recommend-item"]');
-                                return items.length > {items_before};
-                            }}
-                            """,
-                            timeout=10000
-                        )
-                    except:
-                        # 如果等待函数超时，尝试等待网络空闲
+                    # 阶段2: 等待新项目出现（通过检查是否有新的URL或排名）
+                    max_wait = 15  # 最多等待15秒
+                    wait_interval = 0.3
+                    waited = 0
+                    new_items_found = False
+                    
+                    while waited < max_wait:
                         try:
-                            self.page.wait_for_load_state('networkidle', timeout=5000)
-                        except:
-                            pass
+                            # 重新查询所有项目
+                            current_items = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
+                            
+                            # 如果找到项目（数量大于0），检查是否有新内容
+                            if len(current_items) > 0:
+                                current_urls = set()
+                                current_ranks = set()
+                                
+                                for item in current_items:
+                                    try:
+                                        href = item.get_attribute('href') or ''
+                                        if href:
+                                            current_urls.add(href)
+                                        
+                                        rank_elem = item.query_selector('span.font-anton')
+                                        if rank_elem:
+                                            rank_text = rank_elem.inner_text().strip()
+                                            current_ranks.add(rank_text)
+                                    except:
+                                        pass
+                                
+                                # 检查是否有新的URL（不在之前的集合中）
+                                new_urls = current_urls - urls_before
+                                if new_urls:
+                                    logger.info(f"发现 {len(new_urls)} 个新URL: {sorted([url.split('/')[-1] for url in new_urls])}")
+                                    new_items_found = True
+                                    # 再等待一下确保所有项目都加载完成
+                                    time.sleep(1)
+                                    break
+                                
+                                # 检查是否有新的排名（不在之前的集合中）
+                                new_ranks = current_ranks - ranks_before
+                                if new_ranks:
+                                    logger.info(f"发现新排名: {sorted(new_ranks)}")
+                                    new_items_found = True
+                                    # 再等待一下确保所有项目都加载完成
+                                    time.sleep(1)
+                                    break
+                                
+                                # 如果URL集合完全不同（轮播替换），也认为是新内容
+                                if current_urls and not current_urls.intersection(urls_before):
+                                    logger.info(f"检测到轮播替换，新URL集合: {sorted([url.split('/')[-1] for url in current_urls])}")
+                                    new_items_found = True
+                                    time.sleep(1)
+                                    break
+                            # 如果项目数量为0，继续等待（可能是DOM更新瞬间）
+                            elif len(current_items) == 0 and waited > 2:
+                                # 如果等待超过2秒还是0个，可能是真的没有更多内容了
+                                logger.debug(f"等待 {waited:.1f} 秒后仍为0个项目，继续等待...")
+                            
+                        except Exception as e:
+                            logger.debug(f"检查新项目时出错: {e}")
+                        
+                        time.sleep(wait_interval)
+                        waited += wait_interval
                     
-                    # 额外等待确保内容完全渲染
+                    if not new_items_found:
+                        logger.warning(f"等待 {waited} 秒后未发现新项目，继续处理...")
+                    
+                    # 阶段3: 等待网络空闲
+                    try:
+                        self.page.wait_for_load_state('networkidle', timeout=5000)
+                    except:
+                        pass
+                    
+                    # 阶段4: 额外等待确保内容完全渲染
                     time.sleep(1)
                     
                     click_count += 1
                     
-                    # 重新查询当前可见的项目数量
-                    items_after = len(self.page.query_selector_all('a[data-slot="explore-recommend-item"]'))
-                    logger.info(f"点击后，项目数量从 {items_before} 变为 {items_after}")
+                    # 最终检查
+                    items_after = self.page.query_selector_all('a[data-slot="explore-recommend-item"]')
+                    items_after_count = len(items_after)
+                    
+                    if items_after_count > 0:
+                        # 获取新的URL和排名
+                        urls_after = set()
+                        ranks_after = set()
+                        for item in items_after:
+                            try:
+                                href = item.get_attribute('href') or ''
+                                if href:
+                                    urls_after.add(href)
+                                
+                                rank_elem = item.query_selector('span.font-anton')
+                                if rank_elem:
+                                    rank_text = rank_elem.inner_text().strip()
+                                    ranks_after.add(rank_text)
+                            except:
+                                pass
+                        
+                        logger.info(f"点击后: {items_after_count} 个项目, {len(urls_after)} 个URL, 排名: {sorted(ranks_after)}")
+                    else:
+                        logger.warning("点击后项目数量仍为0，可能已加载完所有内容")
                     
                 except Exception as e:
-                    logger.warning(f"点击下一组按钮失败: {e}")
+                    logger.warning(f"点击下一组按钮失败: {e}", exc_info=True)
                     break
             
             logger.info(f"成功提取 {len(top_picks)} 个 Top Picks 项目（共点击 {click_count} 次）")
